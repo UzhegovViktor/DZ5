@@ -1,13 +1,12 @@
 #include "System.hpp"
 #include "Emulator.hpp"
 
-typedef int Mint;
 
 void RaiseError(Errors error) {
   std::cout << warnings[error];
 }
 
-Corrector::Corrector() {
+Corrector::Corrector(Session& session) : session_(session) {
   converter["run"]  = "r";
   converter["add"]  = "a";
   converter["aadd"] = "aa";
@@ -16,9 +15,7 @@ Corrector::Corrector() {
   converter["exit"] = "e";
 }
 
-std::queue<Data> fictive;
-
-void Corrector::IsCorrectType(std::string& command) {
+bool Corrector::IsCorrectType(std::string& command) {
   if (converter.find(command) == converter.end()) {
     bool find_flag = false;
     for (const auto& elem : list_of_commands) {
@@ -27,25 +24,51 @@ void Corrector::IsCorrectType(std::string& command) {
       }
     }
     if (!find_flag) {
-      command = "error";
-      return;
+      return false;
     }
   } else {
     command = converter[command];
   }
+  return true;
+}
+
+bool Corrector::LoadAdress(short int from, short int to) {
+  if (session_.id.find(from) == session_.id.end()) {
+    RaiseError(Errors::UnknownAgent);
+    return false;
+  }
+  if (from == to) {
+    RaiseError(Errors::SelfMessage);
+    return false;
+  }
+  if (session_.id[from]->GetType() == TypesAgents::Auto) {
+    RaiseError(Errors::FromAuto);
+  }
+  return true;
+}
+
+void ToLower(std::string& value) {
+  for (size_t i = 0; i < value.size(); ++i) {
+    value[i] = std::tolower(value[i]);
+  }
+}
+
+Session::Session() {
+  root.next = &root;
+  root.previous = &root;
+  id[0] = &root;
 }
 
 void Session::StartSession() {
-  root.next     = &root;
-  root.previous = &root;
-  id[0]         = &root;
   std::string type;
-  Corrector checker;
+  Corrector checker(*this);
   while (true) {
     std::cout << "> ";
     std::cin >> type;
-    checker.IsCorrectType(type);
-    if (type == "error") {
+    ToLower(type);
+    Run();
+    bool correct = checker.IsCorrectType(type);
+    if (!correct) {
       RaiseError(Errors::UnknownCommand);
       std::string line;
       std::getline(std::cin, line);
@@ -60,29 +83,25 @@ void Session::StartSession() {
       std::cin >> n;
       CreateAgent(n, TypesAgents::Auto);
     } else if (type == "r") {
-      Run();
-      std::cout << fictive;
+      std::cout << buffer.str();
+      buffer.str("");
+      buffer.clear();
     } else if (type == "s") {
       short int from, to;
-      std::string command;
+      std::string message;
       std::string line;
       std::getline(std::cin, line);
       std::istringstream iss(line);
       iss >> from >> to;
-      std::getline(iss, command);
-      if (!command.empty() && command[0] == ' ')
-        command.erase(0, 1);
-      if (id.find(from) == id.end()) {
-        RaiseError(Errors::UnknownAgent);
-        continue;
+      std::getline(iss, message);
+      if (!message.empty() && message[0] == ' ') {
+        message.erase(0, 1);
       }
-      if (from == to) {
-        RaiseError(Errors::SelfMessage);
-        continue;
+      bool correct = checker.LoadAdress(from, to);
+      if (correct) {
+        id[from]->AddMesage(message, to);
       }
-      id[from]->AddMesage(command, to);
     } else if (type == "d") {
-      Run();
       short int number;
       std::cin >> number;
       DeleteAgent(number);
