@@ -1,0 +1,198 @@
+#include "System.hpp"
+#include "Emulator.hpp"
+
+
+void RaiseError(Errors error) {
+  std::cout << warnings[error];
+}
+
+Corrector::Corrector(Session& session) : session_(session) {
+  converter["run"]  = "r";
+  converter["add"]  = "a";
+  converter["aadd"] = "aa";
+  converter["del"]  = "d";
+  converter["send"] = "s";
+  converter["exit"] = "e";
+}
+
+bool Corrector::IsCorrectType(std::string& command) {
+  if (converter.find(command) == converter.end()) {
+    bool find_flag = false;
+    for (const auto& elem : list_of_commands) {
+      if (elem == command) {
+        find_flag = true;
+      }
+    }
+    if (!find_flag) {
+      return false;
+    }
+  } else {
+    command = converter[command];
+  }
+  return true;
+}
+
+bool Corrector::LoadAdress(short int from, short int to) {
+  if (session_.id.find(from) == session_.id.end()) {
+    RaiseError(Errors::UnknownAgent);
+    return false;
+  }
+  if (from == to) {
+    RaiseError(Errors::SelfMessage);
+    return false;
+  }
+  if (session_.id[from]->GetType() == TypesAgents::Auto) {
+    RaiseError(Errors::FromAuto);
+  }
+  return true;
+}
+
+void ToLower(std::string& value) {
+  for (size_t i = 0; i < value.size(); ++i) {
+    value[i] = std::tolower(value[i]);
+  }
+}
+
+Session::Session() {
+  root.next = &root;
+  root.previous = &root;
+  id[0] = &root;
+}
+
+void Session::StartSession() {
+  std::string type;
+  Corrector checker(*this);
+  while (true) {
+    std::cout << "> ";
+    std::cin >> type;
+    ToLower(type);
+    Run();
+    bool correct = checker.IsCorrectType(type);
+    if (!correct) {
+      RaiseError(Errors::UnknownCommand);
+      std::string line;
+      std::getline(std::cin, line);
+      continue;
+    }
+    if (type == "a") {
+      short int n;
+      std::cin >> n;
+      CreateAgent(n, TypesAgents::Simple);
+    } else if (type == "aa") {
+      short int n;
+      std::cin >> n;
+      CreateAgent(n, TypesAgents::Auto);
+    } else if (type == "r") {
+      std::cout << buffer.str();
+      buffer.str("");
+      buffer.clear();
+    } else if (type == "s") {
+      short int from, to;
+      std::string message;
+      std::string line;
+      std::getline(std::cin, line);
+      std::istringstream iss(line);
+      iss >> from >> to;
+      std::getline(iss, message);
+      if (!message.empty() && message[0] == ' ') {
+        message.erase(0, 1);
+      }
+      bool correct = checker.LoadAdress(from, to);
+      if (correct) {
+        id[from]->AddMesage(message, to);
+      }
+    } else if (type == "d") {
+      short int number;
+      std::cin >> number;
+      DeleteAgent(number);
+    } else if (type == "e") {
+      break;
+    }
+  }
+  std::cout << "\nGoodbye!\n";
+}
+
+void Session::HelpCicle(Agent* agent, Data data) {
+  if (data.data_type == DataType::kToken) {
+    if (data.to == agent->GetId()) {
+      if (!agent->submits.empty()) {
+        SendMessageFrom(agent);
+      }
+      SendTokenFrom(agent);
+    }
+    return;
+  }
+
+  while (agent->next->SendGet(data) != Log::MessageFromMe) {
+    agent = agent->next;
+  }
+}
+
+Log Session::SendMessageFrom(Agent* agent) {
+  HelpCicle(agent, agent->GetMessage());
+  return Log::SuccesfulSendMessage;
+}
+
+Log Session::SendTokenFrom(Agent* agent) {
+  if (agent->next->GetId() == 0) {
+    return Log::FullCicle;
+  }
+  HelpCicle(agent->next, Token(agent->GetId(), agent->next->GetId()));
+  return Log::SuccesdulSendToken;
+}
+
+Log Session::SendFrom(Agent* agent) {
+  if (agent->submits.empty()) {
+    SendTokenFrom(agent);
+    return Log::SuccesdulSendToken;
+  } else {
+    SendMessageFrom(agent);
+    SendTokenFrom(agent);
+    return Log::SuccesfulSendMessage;
+  }
+}
+
+void Session::Run() {
+  bool final = false;
+
+  while (!final) {
+    final = true;
+
+    while (root.next->Checker()) {
+      SendFrom(&root);
+      final = false;
+    }
+
+    while (!root.submits.empty()) {
+      SendMessageFrom(&root);
+      final = false;
+    }
+  }
+}
+
+void Session::CreateAgent(short int number, TypesAgents type) {
+  if (id.find(number) != id.end()) {
+    RaiseError(Errors::ExistAgent);
+  }
+  root.CreateAgent(number, type);
+  id[number] = root.next;
+}
+
+void Session::DeleteAgent(short int number) {
+  if (id.find(number) == id.end()) {
+    RaiseError(Errors::UnknownAgent);
+  } else if (number == 0) {
+    RaiseError(Errors::DeleteMainAgent);
+  } else {
+    id[number]->Delete();
+    id.erase(number);
+  }
+}
+
+Session::~Session() {
+  for (const auto& [key, agent_ptr] : id) {
+    if (key != 0) {
+      delete agent_ptr;
+    }
+  }
+}
